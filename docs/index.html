@@ -100,7 +100,9 @@
 
       const CYAN = "#00e5ff";
       const MAGENTA = "#e040fb";
-      const GOLD = "rgb(40, 157, 216)";
+      const LINE_COLOR = "rgb(40, 157, 216)";
+      const CHECKER_EVEN_COLOR = "rgb(22, 118, 170)";
+      const CHECKER_ODD_COLOR = "rgb(12, 150, 155)";
 
       function lineCombos() {
         const combos = [];
@@ -142,12 +144,14 @@
           type: "checker",
           cells: [0, 2, 5, 7, 8, 10, 13, 15],
           prizes: 2,
+          color: CHECKER_EVEN_COLOR,
         },
         {
           id: "checker-odd",
           type: "checker",
           cells: [1, 3, 4, 6, 9, 11, 12, 14],
           prizes: 2,
+          color: CHECKER_ODD_COLOR,
         },
         {
           id: "bingo",
@@ -259,32 +263,42 @@
         return value;
       }
 
-      function drawCellOverlay(ctx, index, { fill, border, fillAlpha, lineWidth }) {
+      function drawCellOverlay(
+        ctx,
+        index,
+        { fill, border, fillAlpha, lineWidth, lineDash, inset = 0 }
+      ) {
         const { x, y, size } = cellRect(index);
+        const ox = x + inset;
+        const oy = y + inset;
+        const os = size - inset * 2;
         if (fill) {
           ctx.save();
           ctx.globalAlpha = fillAlpha ?? 0.5;
-          ctx.fillStyle = paintFor(ctx, fill, x, y, size);
-          ctx.fillRect(x, y, size, size);
+          ctx.fillStyle = paintFor(ctx, fill, ox, oy, os);
+          ctx.fillRect(ox, oy, os, os);
           ctx.restore();
         }
         if (border) {
           const stroke = lineWidth ?? 6;
-          ctx.strokeStyle = paintFor(ctx, border, x, y, size);
+          ctx.save();
+          ctx.strokeStyle = paintFor(ctx, border, ox, oy, os);
           ctx.lineWidth = stroke;
+          if (lineDash) ctx.setLineDash(lineDash);
           ctx.strokeRect(
-            x + stroke / 2,
-            y + stroke / 2,
-            size - stroke,
-            size - stroke
+            ox + stroke / 2,
+            oy + stroke / 2,
+            os - stroke,
+            os - stroke
           );
+          ctx.restore();
         }
       }
 
       function drawLineHighlight(ctx, cells) {
         const points = cells.map(cellCenter);
         ctx.save();
-        ctx.strokeStyle = GOLD;
+        ctx.strokeStyle = LINE_COLOR;
         ctx.lineWidth = 16;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
@@ -298,48 +312,103 @@
 
         cells.forEach((index) => {
           drawCellOverlay(ctx, index, {
-            border: GOLD,
+            border: LINE_COLOR,
             lineWidth: 8,
           });
         });
       }
 
-      function drawCheckerHighlight(ctx, cells) {
+      function drawCheckerFill(ctx, cells, color) {
         cells.forEach((index) => {
           drawCellOverlay(ctx, index, {
-            fill: GOLD,
+            fill: color,
             fillAlpha: 0.35,
           });
         });
       }
 
-      function drawFullHighlight(ctx) {
-        const size = GRID.cols * GRID.cell + (GRID.cols - 1) * GRID.gutter;
-        const stroke = 14;
+      function drawCheckerBorder(ctx, cells, color) {
+        cells.forEach((index) => {
+          drawCellOverlay(ctx, index, {
+            border: color,
+            lineWidth: 8,
+            lineDash: [22, 14],
+            inset: 12,
+          });
+        });
+      }
+
+      function drawFullHighlight(ctx, pulse = 0) {
+        const gridSize = GRID.cols * GRID.cell + (GRID.cols - 1) * GRID.gutter;
+        const pad = 12 + pulse * 16;
+        const x = GRID.left - pad;
+        const y = GRID.top - pad;
+        const size = gridSize + pad * 2;
+        const radius = 24;
+        const gradient = cellGradient(ctx, x, y, size);
+
+        if (pulse > 0) {
+          const ringPad = 12 + pulse * 36;
+          const rx = GRID.left - ringPad;
+          const ry = GRID.top - ringPad;
+          const rs = gridSize + ringPad * 2;
+          ctx.save();
+          ctx.globalAlpha = (1 - pulse) * 0.9;
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = 6 + pulse * 8;
+          ctx.beginPath();
+          ctx.roundRect(rx, ry, rs, rs, radius + pulse * 8);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         ctx.save();
-        ctx.strokeStyle = GOLD;
-        ctx.lineWidth = stroke;
         ctx.beginPath();
-        ctx.roundRect(
-          GRID.left - stroke / 2,
-          GRID.top - stroke / 2,
-          size + stroke,
-          size + stroke,
-          20
-        );
+        ctx.roundRect(x, y, size, size, radius);
+
+        ctx.shadowColor = CYAN;
+        ctx.shadowBlur = 32 + pulse * 48;
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = 18 + pulse * 10;
         ctx.stroke();
+
+        ctx.shadowBlur = 0;
+        ctx.lineWidth = 8;
+        ctx.stroke();
+
         ctx.restore();
       }
 
-      function drawCombinationHighlights(ctx, matches) {
-        matches
-          .filter((combo) => combo.type === "checker")
-          .forEach((combo) => drawCheckerHighlight(ctx, combo.cells));
+      function drawBingoBurst(ctx, pulse) {
+        const scale = 0.72 + pulse * 0.55;
+        ctx.save();
+        ctx.globalAlpha = 0.72 + pulse * 0.28;
+        ctx.translate(CANVAS_SIZE / 2, CANVAS_SIZE / 2);
+        ctx.scale(scale, scale);
+        ctx.font = "900 140px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = MAGENTA;
+        ctx.shadowBlur = 28;
+        ctx.fillStyle = cellGradient(ctx, -280, -80, 560);
+        ctx.fillText("BINGO!", 0, 0);
+        ctx.restore();
+      }
+
+      function drawCombinationHighlights(ctx, matches, pulse = 0) {
+        const checkers = matches.filter((combo) => combo.type === "checker");
+        checkers.forEach((combo) =>
+          drawCheckerFill(ctx, combo.cells, combo.color)
+        );
         matches
           .filter((combo) => combo.type === "line")
           .forEach((combo) => drawLineHighlight(ctx, combo.cells));
+        checkers.forEach((combo) =>
+          drawCheckerBorder(ctx, combo.cells, combo.color)
+        );
         if (matches.some((combo) => combo.type === "full")) {
-          drawFullHighlight(ctx);
+          drawFullHighlight(ctx, pulse);
+          drawBingoBurst(ctx, pulse);
         }
       }
 
@@ -353,6 +422,41 @@
         const ctx = canvas.getContext("2d");
         const selected = loadSelected(storageKey);
         let background = null;
+        let bingoPulse = 0;
+        let pulseRaf = 0;
+        const reduceMotion = window.matchMedia(
+          "(prefers-reduced-motion: reduce)"
+        ).matches;
+
+        function hasBingo() {
+          return matchCombinations(selected, combinations).some(
+            (combo) => combo.type === "full"
+          );
+        }
+
+        function stopBingoPulse() {
+          if (pulseRaf) cancelAnimationFrame(pulseRaf);
+          pulseRaf = 0;
+          bingoPulse = 0;
+        }
+
+        function startBingoPulse() {
+          if (reduceMotion) {
+            bingoPulse = 1;
+            redraw();
+            return;
+          }
+          if (pulseRaf) cancelAnimationFrame(pulseRaf);
+          const period = 900;
+          const start = performance.now();
+          function tick(now) {
+            const t = ((now - start) / period) % 1;
+            bingoPulse = Math.sin(t * Math.PI);
+            redraw();
+            pulseRaf = requestAnimationFrame(tick);
+          }
+          pulseRaf = requestAnimationFrame(tick);
+        }
 
         function save() {
           localStorage.setItem(storageKey, JSON.stringify(selected));
@@ -378,7 +482,7 @@
           });
 
           const matches = matchCombinations(selected, combinations);
-          drawCombinationHighlights(ctx, matches);
+          drawCombinationHighlights(ctx, matches, bingoPulse);
           updatePrizeLabel(
             prizeEl,
             matches.reduce((sum, combo) => sum + (combo.prizes || 0), 0),
@@ -387,6 +491,7 @@
         }
 
         function reset() {
+          stopBingoPulse();
           selected.fill(false);
           save();
           redraw();
@@ -406,8 +511,15 @@
           const { x, y } = pointerToCanvas(event);
           const index = cellAt(x, y);
           if (index < 0) return;
+          const beforeBingo = hasBingo();
           selected[index] = !selected[index];
           save();
+          const afterBingo = hasBingo();
+          if (afterBingo && !beforeBingo) {
+            startBingoPulse();
+            return;
+          }
+          if (!afterBingo) stopBingoPulse();
           redraw();
         });
 
@@ -429,6 +541,7 @@
         image.src = "bingo_ig.png";
 
         redraw();
+        if (hasBingo()) startBingoPulse();
 
         return {
           reset,
