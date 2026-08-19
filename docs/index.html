@@ -30,12 +30,32 @@
 
       canvas {
         display: block;
-        width: min(1200px, 100vw - 16px, calc(100dvh - 80px));
+        width: min(1200px, 100vw - 16px, calc(100dvh - 140px));
         height: auto;
         aspect-ratio: 1;
         touch-action: none;
         cursor: pointer;
         user-select: none;
+      }
+
+      #prizes {
+        text-align: center;
+        min-height: 2.75em;
+      }
+
+      .prizes-total {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: rgb(40, 157, 216);
+      }
+
+      .prizes-breakdown {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.7);
+        min-height: 1.2em;
       }
 
       button {
@@ -60,6 +80,10 @@
   </head>
   <body>
     <canvas id="bingo" width="1200" height="1200"></canvas>
+    <div id="prizes" aria-live="polite">
+      <p class="prizes-total">Masz 0 losów</p>
+      <p class="prizes-breakdown"></p>
+    </div>
     <button type="button" id="reset">Resetuj kartę</button>
 
     <script>
@@ -76,9 +100,62 @@
 
       const CYAN = "#00e5ff";
       const MAGENTA = "#e040fb";
+      const GOLD = "rgb(40, 157, 216)";
 
-      // Fill in later: { id, cells: [0, 1, 2, 3], fill, border, fillAlpha, lineWidth }
-      const COMBINATIONS = [];
+      function lineCombos() {
+        const combos = [];
+        for (let row = 0; row < GRID.rows; row++) {
+          combos.push({
+            id: `row-${row}`,
+            type: "line",
+            cells: Array.from({ length: GRID.cols }, (_, col) => row * GRID.cols + col),
+            prizes: 1,
+          });
+        }
+        for (let col = 0; col < GRID.cols; col++) {
+          combos.push({
+            id: `col-${col}`,
+            type: "line",
+            cells: Array.from({ length: GRID.rows }, (_, row) => row * GRID.cols + col),
+            prizes: 1,
+          });
+        }
+        combos.push({
+          id: "diag-main",
+          type: "line",
+          cells: [0, 5, 10, 15],
+          prizes: 1,
+        });
+        combos.push({
+          id: "diag-anti",
+          type: "line",
+          cells: [3, 6, 9, 12],
+          prizes: 1,
+        });
+        return combos;
+      }
+
+      const COMBINATIONS = [
+        ...lineCombos(),
+        {
+          id: "checker-even",
+          type: "checker",
+          cells: [0, 2, 5, 7, 8, 10, 13, 15],
+          prizes: 2,
+        },
+        {
+          id: "checker-odd",
+          type: "checker",
+          cells: [1, 3, 4, 6, 9, 11, 12, 14],
+          prizes: 2,
+        },
+        {
+          id: "bingo",
+          type: "full",
+          cells: Array.from({ length: GRID.cols * GRID.rows }, (_, index) => index),
+          prizes: 4,
+        },
+      ];
 
       function cellRect(index) {
         const col = index % GRID.cols;
@@ -89,6 +166,11 @@
           y: GRID.top + row * step,
           size: GRID.cell,
         };
+      }
+
+      function cellCenter(index) {
+        const { x, y, size } = cellRect(index);
+        return { x: x + size / 2, y: y + size / 2 };
       }
 
       function cellAt(x, y) {
@@ -123,6 +205,44 @@
         return combinations.filter((combo) =>
           combo.cells.every((index) => selected[index])
         );
+      }
+
+      function polishPlural(n, one, few, many) {
+        if (n === 1) return one;
+        const mod10 = n % 10;
+        const mod100 = n % 100;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+        return many;
+      }
+
+      function prizeBreakdown(matches) {
+        const lines = matches.filter((combo) => combo.type === "line").length;
+        const checkers = matches.filter((combo) => combo.type === "checker").length;
+        const full = matches.some((combo) => combo.type === "full");
+        const parts = [];
+        if (lines) {
+          parts.push(`${lines} ${polishPlural(lines, "linia", "linie", "linii")}`);
+        }
+        if (checkers) {
+          parts.push(
+            checkers === 1
+              ? "szachownica"
+              : `2 ${polishPlural(2, "szachownica", "szachownice", "szachownic")}`
+          );
+        }
+        if (full) parts.push("Bingo");
+        return parts.join(" · ");
+      }
+
+      function updatePrizeLabel(prizeEl, total, matches) {
+        if (!prizeEl) return;
+        const totalEl = prizeEl.querySelector(".prizes-total");
+        const breakdownEl = prizeEl.querySelector(".prizes-breakdown");
+        const word = polishPlural(total, "los", "losy", "losów");
+        if (totalEl) totalEl.textContent = `Masz ${total} ${word}`;
+        if (breakdownEl) {
+          breakdownEl.textContent = total > 0 ? prizeBreakdown(matches) : "";
+        }
       }
 
       function cellGradient(ctx, x, y, size) {
@@ -161,7 +281,75 @@
         }
       }
 
-      function createBoard({ canvas, storageKey, combinations = [], resetButton }) {
+      function drawLineHighlight(ctx, cells) {
+        const points = cells.map(cellCenter);
+        ctx.save();
+        ctx.strokeStyle = GOLD;
+        ctx.lineWidth = 16;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        cells.forEach((index) => {
+          drawCellOverlay(ctx, index, {
+            border: GOLD,
+            lineWidth: 8,
+          });
+        });
+      }
+
+      function drawCheckerHighlight(ctx, cells) {
+        cells.forEach((index) => {
+          drawCellOverlay(ctx, index, {
+            fill: GOLD,
+            fillAlpha: 0.35,
+          });
+        });
+      }
+
+      function drawFullHighlight(ctx) {
+        const size = GRID.cols * GRID.cell + (GRID.cols - 1) * GRID.gutter;
+        const stroke = 14;
+        ctx.save();
+        ctx.strokeStyle = GOLD;
+        ctx.lineWidth = stroke;
+        ctx.beginPath();
+        ctx.roundRect(
+          GRID.left - stroke / 2,
+          GRID.top - stroke / 2,
+          size + stroke,
+          size + stroke,
+          20
+        );
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawCombinationHighlights(ctx, matches) {
+        matches
+          .filter((combo) => combo.type === "checker")
+          .forEach((combo) => drawCheckerHighlight(ctx, combo.cells));
+        matches
+          .filter((combo) => combo.type === "line")
+          .forEach((combo) => drawLineHighlight(ctx, combo.cells));
+        if (matches.some((combo) => combo.type === "full")) {
+          drawFullHighlight(ctx);
+        }
+      }
+
+      function createBoard({
+        canvas,
+        storageKey,
+        combinations = [],
+        resetButton,
+        prizeEl,
+      }) {
         const ctx = canvas.getContext("2d");
         const selected = loadSelected(storageKey);
         let background = null;
@@ -189,17 +377,13 @@
             });
           });
 
-          matchCombinations(selected, combinations).forEach((combo) => {
-            const targets = combo.cells;
-            targets.forEach((index) => {
-              drawCellOverlay(ctx, index, {
-                fill: combo.fill,
-                border: combo.border,
-                fillAlpha: combo.fillAlpha,
-                lineWidth: combo.lineWidth,
-              });
-            });
-          });
+          const matches = matchCombinations(selected, combinations);
+          drawCombinationHighlights(ctx, matches);
+          updatePrizeLabel(
+            prizeEl,
+            matches.reduce((sum, combo) => sum + (combo.prizes || 0), 0),
+            matches
+          );
         }
 
         function reset() {
@@ -258,6 +442,7 @@
         storageKey: "bingo-ig-selected",
         combinations: COMBINATIONS,
         resetButton: document.getElementById("reset"),
+        prizeEl: document.getElementById("prizes"),
       });
     </script>
   </body>
