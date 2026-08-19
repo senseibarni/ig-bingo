@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bingo — Wakacyjny Challenge Sportowy</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #000;
+        color: #fff;
+        font-family: system-ui, sans-serif;
+      }
+
+      body {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 8px;
+      }
+
+      canvas {
+        display: block;
+        width: min(1200px, 100vw - 16px, calc(100dvh - 80px));
+        height: auto;
+        aspect-ratio: 1;
+        touch-action: none;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      button {
+        appearance: none;
+        background: transparent;
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 999px;
+        padding: 10px 22px;
+        font: inherit;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+      }
+
+      button:hover,
+      button:focus-visible {
+        border-color: #00e5ff;
+        outline: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bingo" width="1200" height="1200"></canvas>
+    <button type="button" id="reset">Resetuj kartę</button>
+
+    <script>
+      const CANVAS_SIZE = 1200;
+      const GRID = {
+        left: 108,
+        top: 112,
+        right: 116,
+        gutter: 8,
+        cols: 4,
+        rows: 4,
+        cell: 238,
+      };
+
+      const CYAN = "#00e5ff";
+      const MAGENTA = "#e040fb";
+
+      // Fill in later: { id, cells: [0, 1, 2, 3], fill, border, fillAlpha, lineWidth }
+      const COMBINATIONS = [];
+
+      function cellRect(index) {
+        const col = index % GRID.cols;
+        const row = Math.floor(index / GRID.cols);
+        const step = GRID.cell + GRID.gutter;
+        return {
+          x: GRID.left + col * step,
+          y: GRID.top + row * step,
+          size: GRID.cell,
+        };
+      }
+
+      function cellAt(x, y) {
+        const count = GRID.cols * GRID.rows;
+        for (let i = 0; i < count; i++) {
+          const { x: cx, y: cy, size } = cellRect(i);
+          if (x >= cx && x < cx + size && y >= cy && y < cy + size) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      function loadSelected(storageKey) {
+        const count = GRID.cols * GRID.rows;
+        try {
+          const raw = JSON.parse(localStorage.getItem(storageKey));
+          if (
+            Array.isArray(raw) &&
+            raw.length === count &&
+            raw.every((value) => typeof value === "boolean")
+          ) {
+            return raw;
+          }
+        } catch {
+          /* ignore invalid storage */
+        }
+        return Array(count).fill(false);
+      }
+
+      function matchCombinations(selected, combinations) {
+        return combinations.filter((combo) =>
+          combo.cells.every((index) => selected[index])
+        );
+      }
+
+      function cellGradient(ctx, x, y, size) {
+        const gradient = ctx.createLinearGradient(x, y, x + size, y + size);
+        gradient.addColorStop(0, CYAN);
+        gradient.addColorStop(1, MAGENTA);
+        return gradient;
+      }
+
+      function paintFor(ctx, value, x, y, size) {
+        if (!value || value === "cyan-magenta") {
+          return cellGradient(ctx, x, y, size);
+        }
+        return value;
+      }
+
+      function drawCellOverlay(ctx, index, { fill, border, fillAlpha, lineWidth }) {
+        const { x, y, size } = cellRect(index);
+        if (fill) {
+          ctx.save();
+          ctx.globalAlpha = fillAlpha ?? 0.5;
+          ctx.fillStyle = paintFor(ctx, fill, x, y, size);
+          ctx.fillRect(x, y, size, size);
+          ctx.restore();
+        }
+        if (border) {
+          const stroke = lineWidth ?? 6;
+          ctx.strokeStyle = paintFor(ctx, border, x, y, size);
+          ctx.lineWidth = stroke;
+          ctx.strokeRect(
+            x + stroke / 2,
+            y + stroke / 2,
+            size - stroke,
+            size - stroke
+          );
+        }
+      }
+
+      function createBoard({ canvas, storageKey, combinations = [], resetButton }) {
+        const ctx = canvas.getContext("2d");
+        const selected = loadSelected(storageKey);
+        let background = null;
+
+        function save() {
+          localStorage.setItem(storageKey, JSON.stringify(selected));
+        }
+
+        function redraw() {
+          ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+          if (background) {
+            ctx.drawImage(background, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+          }
+
+          selected.forEach((isOn, index) => {
+            if (!isOn) return;
+            drawCellOverlay(ctx, index, {
+              fill: "cyan-magenta",
+              border: "cyan-magenta",
+              fillAlpha: 0.5,
+              lineWidth: 6,
+            });
+          });
+
+          matchCombinations(selected, combinations).forEach((combo) => {
+            const targets = combo.cells;
+            targets.forEach((index) => {
+              drawCellOverlay(ctx, index, {
+                fill: combo.fill,
+                border: combo.border,
+                fillAlpha: combo.fillAlpha,
+                lineWidth: combo.lineWidth,
+              });
+            });
+          });
+        }
+
+        function reset() {
+          selected.fill(false);
+          save();
+          redraw();
+        }
+
+        function pointerToCanvas(event) {
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = CANVAS_SIZE / rect.width;
+          const scaleY = CANVAS_SIZE / rect.height;
+          return {
+            x: (event.clientX - rect.left) * scaleX,
+            y: (event.clientY - rect.top) * scaleY,
+          };
+        }
+
+        canvas.addEventListener("pointerdown", (event) => {
+          const { x, y } = pointerToCanvas(event);
+          const index = cellAt(x, y);
+          if (index < 0) return;
+          selected[index] = !selected[index];
+          save();
+          redraw();
+        });
+
+        if (resetButton) {
+          resetButton.addEventListener("click", () => {
+            if (!window.confirm("Czy na pewno chcesz zresetować kartę?")) {
+              return;
+            }
+            reset();
+          });
+        }
+
+        const image = new Image();
+        image.onload = () => {
+          background = image;
+          redraw();
+        };
+        image.onerror = () => redraw();
+        image.src = "bingo_ig.png";
+
+        redraw();
+
+        return {
+          reset,
+          getSelected: () => selected.slice(),
+          redraw,
+        };
+      }
+
+      createBoard({
+        canvas: document.getElementById("bingo"),
+        storageKey: "bingo-ig-selected",
+        combinations: COMBINATIONS,
+        resetButton: document.getElementById("reset"),
+      });
+    </script>
+  </body>
+</html>
